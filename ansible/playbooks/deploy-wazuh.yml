@@ -1,0 +1,61 @@
+---
+- name: Deploy Wazuh single-node stack
+  hosts: soc_server
+  become: true
+  vars:
+    wazuh_version: "v4.14.6"
+    wazuh_repo_dir: "/home/{{ ansible_env.SUDO_USER | default(ansible_user_id) }}/soc-as-code/wazuh-docker"
+
+  tasks:
+    - name: Ensure git is installed
+      apt:
+        name: git
+        state: present
+        update_cache: true
+
+    - name: Clone wazuh-docker repo (pinned version)
+      git:
+        repo: "https://github.com/wazuh/wazuh-docker.git"
+        dest: "{{ wazuh_repo_dir }}"
+        version: "{{ wazuh_version }}"
+        force: false
+
+    - name: Set vm.max_map_count for OpenSearch
+      ansible.posix.sysctl:
+        name: vm.max_map_count
+        value: "262144"
+        sysctl_set: true
+        state: present
+        reload: true
+
+    - name: Check if certs already generated
+      stat:
+        path: "{{ wazuh_repo_dir }}/single-node/config/wazuh_indexer_ssl_certs/root-ca.pem"
+      register: certs_exist
+
+    - name: Generate indexer TLS certificates
+      community.docker.docker_compose_v2:
+        project_src: "{{ wazuh_repo_dir }}/single-node"
+        files:
+          - generate-indexer-certs.yml
+        state: present
+      when: not certs_exist.stat.exists
+
+    - name: Confirm indexer JVM heap setting
+      command: grep -i "OPENSEARCH_JAVA_OPTS" "{{ wazuh_repo_dir }}/single-node/docker-compose.yml"
+      register: heap_check
+      changed_when: false
+
+    - name: Show current heap configuration
+      debug:
+        var: heap_check.stdout
+
+    - name: Deploy Wazuh stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ wazuh_repo_dir }}/single-node"
+        state: present
+      register: wazuh_stack
+
+    - name: Show deployment result
+      debug:
+        var: wazuh_stack

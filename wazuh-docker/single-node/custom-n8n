@@ -1,0 +1,9 @@
+#!/bin/sh
+
+# Define absolute paths to ensure it works anywhere
+WAZUH_PATH="/var/ossec"
+WPYTHON_BIN="${WAZUH_PATH}/framework/python/bin/python3"
+SCRIPT_PATH="${WAZUH_PATH}/integrations/custom-n8n.py"
+
+# Execute using double quotes around the arguments to handle paths perfectly
+exec ${WPYTHON_BIN} ${SCRIPT_PATH} "$@"

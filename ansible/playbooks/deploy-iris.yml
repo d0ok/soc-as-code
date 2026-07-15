@@ -1,0 +1,122 @@
+---
+- name: Deploy DFIR-IRIS
+  hosts: soc_server
+  become: true
+  vars:
+    iris_version: "v2.4.27"
+    iris_repo_dir: "/home/{{ ansible_env.SUDO_USER | default(ansible_user_id) }}/soc-as-code/iris-web"
+    iris_https_port: "8443"
+
+  tasks:
+    - name: Ensure git is installed
+      apt:
+        name: git
+        state: present
+        update_cache: true
+
+    - name: Check if iris-web repo already exists
+      stat:
+        path: "{{ iris_repo_dir }}/.git"
+      register: repo_exists
+
+    - name: Clone iris-web repo (pinned version) — only on first run
+      git:
+        repo: "https://github.com/dfir-iris/iris-web.git"
+        dest: "{{ iris_repo_dir }}"
+        version: "{{ iris_version }}"
+        force: false
+      when: not repo_exists.stat.exists
+
+    - name: Note that repo already exists (skipping clone, preserving local state)
+      debug:
+        msg: "iris-web already cloned at {{ iris_repo_dir }} — skipping clone to preserve local config changes."
+      when: repo_exists.stat.exists
+
+    - name: Check if .env already exists (avoid overwriting an existing deployment's secrets)
+      stat:
+        path: "{{ iris_repo_dir }}/.env"
+      register: env_exists
+
+    - name: Copy .env.model to .env
+      copy:
+        src: "{{ iris_repo_dir }}/.env.model"
+        dest: "{{ iris_repo_dir }}/.env"
+        remote_src: true
+      when: not env_exists.stat.exists
+
+    - name: Generate random secrets for first-time setup
+      set_fact:
+        generated_postgres_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+        generated_postgres_admin_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+        generated_secret_key: "{{ lookup('password', '/dev/null length=48 chars=ascii_letters,digits') }}"
+        generated_salt: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+      when: not env_exists.stat.exists
+
+    - name: Set POSTGRES_PASSWORD in .env
+      lineinfile:
+        path: "{{ iris_repo_dir }}/.env"
+        regexp: '^POSTGRES_PASSWORD='
+        line: "POSTGRES_PASSWORD={{ generated_postgres_password }}"
+      when: not env_exists.stat.exists
+
+    - name: Set POSTGRES_ADMIN_PASSWORD in .env
+      lineinfile:
+        path: "{{ iris_repo_dir }}/.env"
+        regexp: '^POSTGRES_ADMIN_PASSWORD='
+        line: "POSTGRES_ADMIN_PASSWORD={{ generated_postgres_admin_password }}"
+      when: not env_exists.stat.exists
+
+    - name: Set IRIS_SECRET_KEY in .env
+      lineinfile:
+        path: "{{ iris_repo_dir }}/.env"
+        regexp: '^IRIS_SECRET_KEY='
+        line: "IRIS_SECRET_KEY={{ generated_secret_key }}"
+      when: not env_exists.stat.exists
+
+    - name: Set IRIS_SECURITY_PASSWORD_SALT in .env
+      lineinfile:
+        path: "{{ iris_repo_dir }}/.env"
+        regexp: '^IRIS_SECURITY_PASSWORD_SALT='
+        line: "IRIS_SECURITY_PASSWORD_SALT={{ generated_salt }}"
+      when: not env_exists.stat.exists
+
+    - name: Warn if .env already existed (secrets untouched)
+      debug:
+        msg: ".env already existed — left untouched."
+      when: env_exists.stat.exists
+
+    - name: Remove any existing INTERFACE_HTTPS_PORT line (avoid duplicates)
+      lineinfile:
+        path: "{{ iris_repo_dir }}/.env"
+        regexp: '^INTERFACE_HTTPS_PORT='
+        state: absent
+
+    - name: Set INTERFACE_HTTPS_PORT to avoid conflict with Wazuh dashboard on 443
+      lineinfile:
+        path: "{{ iris_repo_dir }}/.env"
+        line: "INTERFACE_HTTPS_PORT={{ iris_https_port }}"
+        insertafter: EOF
+
+    - name: Ensure d0ok owns the .env file for future manual edits
+      file:
+        path: "{{ iris_repo_dir }}/.env"
+        owner: "{{ ansible_env.SUDO_USER | default(ansible_user_id) }}"
+        group: "{{ ansible_env.SUDO_USER | default(ansible_user_id) }}"
+        mode: "0644"
+
+    - name: Pull IRIS images
+      community.docker.docker_compose_v2:
+        project_src: "{{ iris_repo_dir }}"
+        pull: "always"
+        state: present
+      register: pull_result
+
+    - name: Deploy IRIS stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ iris_repo_dir }}"
+        state: present
+      register: iris_result
+
+    - name: Show deployment result
+      debug:
+        var: iris_result

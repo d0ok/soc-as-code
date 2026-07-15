@@ -1,0 +1,94 @@
+---
+# deploy_n8n.yml
+#
+# Deploys n8n (SOAR/automation layer) as a Docker container.
+# Idempotent: safe to re-run; will not disrupt an already-running,
+# correctly-configured container.
+#
+# Usage:
+#   ansible-playbook -i inventory.ini deploy_n8n.yml
+#
+# Requires:
+#   - community.docker collection on the control node:
+#       ansible-galaxy collection install community.docker
+#   - Python docker SDK on the target host:
+#       pip3 install docker
+
+- name: Deploy n8n automation/SOAR layer
+  hosts: soc_server
+  become: true
+  vars:
+    n8n_image: "docker.n8n.io/n8nio/n8n:latest"
+    n8n_container_name: "n8n"
+    n8n_port: 5678
+    n8n_volume_name: "n8n_data"
+    n8n_timezone: "Africa/Tunis"
+
+  vars_files:
+    - vars/n8n_secrets.vault.yml
+
+  tasks:
+
+    - name: Ensure required Python Docker SDK is present (via apt, PEP 668-safe)
+      apt:
+        name: python3-docker
+        state: present
+        update_cache: true
+      become: true
+
+    - name: Pull latest n8n image
+      community.docker.docker_image:
+        name: "{{ n8n_image }}"
+        source: pull
+        force_source: true
+
+    - name: Ensure n8n data volume exists
+      community.docker.docker_volume:
+        name: "{{ n8n_volume_name }}"
+        state: present
+
+    - name: Remove any pre-existing n8n container (re-created cleanly below)
+      community.docker.docker_container:
+        name: "{{ n8n_container_name }}"
+        state: absent
+      when: recreate_n8n | default(false) | bool
+
+    - name: Deploy n8n container
+      community.docker.docker_container:
+        name: "{{ n8n_container_name }}"
+        image: "{{ n8n_image }}"
+        state: started
+        restart_policy: unless-stopped
+        published_ports:
+          - "{{ n8n_port }}:5678"
+        volumes:
+          - "{{ n8n_volume_name }}:/home/node/.n8n"
+        env:
+          GENERIC_TIMEZONE: "{{ n8n_timezone }}"
+          TZ: "{{ n8n_timezone }}"
+          N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+          N8N_SECURE_COOKIE: "false"
+          N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+          VT_API_KEY: "{{ vault_vt_api_key }}"
+          ABUSEIPDB_API_KEY: "{{ vault_abuseipdb_api_key }}"
+          OTX_API_KEY: "{{ vault_otx_api_key }}"
+          IRIS_URL: "{{ vault_iris_url }}"
+          IRIS_API_KEY: "{{ vault_iris_api_key }}"
+        comparisons:
+          env: strict
+          volumes: strict
+          published_ports: strict
+
+    - name: Wait for n8n to be reachable
+      uri:
+        url: "http://localhost:{{ n8n_port }}/"
+        status_code: 200
+        timeout: 5
+      register: n8n_health
+      until: n8n_health.status == 200
+      retries: 10
+      delay: 3
+
+    - name: Show n8n access URL
+      debug:
+        msg: "n8n is up — access it at http://{{ ansible_host | default(inventory_hostname) }}:{{ n8n_port }}"

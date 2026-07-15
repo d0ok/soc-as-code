@@ -1,0 +1,20 @@
+# Wazuh generated certs/secrets
+wazuh-docker/single-node/config/wazuh_indexer_ssl_certs/
+wazuh-docker/single-node/.env
+**/.env
+# Terraform state and cache (contains resource state, sometimes sensitive)
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.backup
+**/.terraform.lock.hcl
+
+# Ansible
+*.retry
+
+# General
+*.log
+.DS_Store
+#Custom
+iris-web/certificates/
+change_iris_pass.py
+.git-corrupted-backup/
