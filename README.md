@@ -4,8 +4,6 @@ Automated security monitoring, threat intelligence enrichment, and incident mana
 
 A lightweight Security Operations Center pipeline built around **Wazuh** (SIEM), **n8n** (SOAR/workflow automation), and **DFIR-IRIS** (case management). Alerts are detected, enriched with threat intelligence, scored, and turned into structured incident cases automatically. All services run in Docker and are provisioned with Ansible.
 
-> Built during a summer 2026 engineering internship at EY Tunisia (Security Consulting).
-
 ---
 
 ## Architecture
